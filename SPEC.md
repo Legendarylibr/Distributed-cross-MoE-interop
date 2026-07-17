@@ -6,14 +6,17 @@
 
 Companion documents:
 
+- [docs/README.md](docs/README.md) — documentation index
+- [docs/getting-started.md](docs/getting-started.md) — install and first runs
 - [docs/architecture.md](docs/architecture.md) — topology, roles, rationale
 - [docs/learning.md](docs/learning.md) — combination learner algorithms and pseudocode
 - [docs/protocol.md](docs/protocol.md) — RPC semantics and wire sketches
 - [docs/evaluation.md](docs/evaluation.md) — metrics, ablations, threats, conformance tests
+- [docs/deploy-compose.md](docs/deploy-compose.md) — Docker Compose multi-node deploy
+- [docs/security.md](docs/security.md) — operator security profiles and controls
+- [docs/security-redteam.md](docs/security-redteam.md) — adversarial risk assessment (AI-REDTEAM-ULTRA)
 - [schemas/](schemas/) — Protobuf and JSON Schema contracts
 - [cei/](cei/) — reference Python simulator (Registry, Router, Learner, hosts)
-- [docs/deploy-compose.md](docs/deploy-compose.md) — Docker Compose multi-node deploy
-- [docs/security-redteam.md](docs/security-redteam.md) — adversarial risk assessment (AI-REDTEAM-ULTRA)
 - [docker-compose.yml](docker-compose.yml) — registry / router / learner / node-* / driver
 
 ---
