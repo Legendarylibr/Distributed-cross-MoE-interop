@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cei.spec/schemas/budget.json",
+  "title": "Budget",
+  "type": "object",
+  "properties": {
+    "max_remote_latency_ms": { "type": "number", "minimum": 0 },
+    "max_remote_experts": { "type": "integer", "minimum": 0 },
+    "max_flops": { "type": "integer", "minimum": 0 },
+    "strict_local_fallback": { "type": "boolean" },
+    "require_leases": { "type": "boolean" },
+    "allow_soft_latency": { "type": "boolean" }
+  },
+  "additionalProperties": false
+}

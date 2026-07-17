@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cei.spec/schemas/combination_plan.json",
+  "title": "CombinationPlan",
+  "type": "object",
+  "required": ["plan_id", "host_model_id", "steps", "budget", "ttl_ms", "score"],
+  "properties": {
+    "plan_id": { "type": "string", "minLength": 1 },
+    "host_model_id": { "type": "string", "minLength": 1 },
+    "steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["layer_id", "expert_refs", "op"],
+        "properties": {
+          "layer_id": { "type": "integer", "minimum": 0 },
+          "expert_refs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["model_id", "layer_id", "expert_id"],
+              "properties": {
+                "model_id": { "type": "string" },
+                "layer_id": { "type": "integer" },
+                "expert_id": { "type": "integer" }
+              },
+              "additionalProperties": false
+            }
+          },
+          "weights": {
+            "type": "array",
+            "items": { "type": "number" }
+          },
+          "op": {
+            "type": "string",
+            "enum": ["REPLACE", "AUGMENT"]
+          },
+          "lease_ids": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "adapter_ids": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "budget": { "$ref": "budget.schema.json" },
+    "ttl_ms": { "type": "integer", "minimum": 1 },
+    "score": { "type": "number" },
+    "local_only_equivalent": { "type": "boolean" }
+  },
+  "additionalProperties": false
+}

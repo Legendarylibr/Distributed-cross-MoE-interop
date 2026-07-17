@@ -1,0 +1,309 @@
+// CEI — Cross-Expert Interoperation v0.1.0
+// Normative protobuf schema. See SPEC.md and docs/protocol.md.
+
+syntax = "proto3";
+
+package cei.v0_1;
+
+option java_multiple_files = true;
+option go_package = "cei/v0_1;cei";
+
+// ---------------------------------------------------------------------------
+// Common
+// ---------------------------------------------------------------------------
+
+message RequestMeta {
+  string request_id = 1;   // UUID, idempotency key
+  string principal_id = 2;
+  string trace_id = 3;
+  string cei_version = 4;  // "0.1.0"
+}
+
+message ExpertRef {
+  string model_id = 1;
+  int32 layer_id = 2;
+  int32 expert_id = 3;
+}
+
+enum DType {
+  DTYPE_UNSPECIFIED = 0;
+  F16 = 1;
+  BF16 = 2;
+  F32 = 3;
+  F8 = 4;
+}
+
+message Budget {
+  float max_remote_latency_ms = 1;
+  int32 max_remote_experts = 2;
+  int64 max_flops = 3;
+  optional bool strict_local_fallback = 4;
+  optional bool require_leases = 5;
+  optional bool allow_soft_latency = 6;
+}
+
+// ---------------------------------------------------------------------------
+// Descriptors & plans
+// ---------------------------------------------------------------------------
+
+message ExpertDescriptor {
+  ExpertRef expert_ref = 1;
+  string version = 2;
+  int32 dim_in = 3;
+  int32 dim_out = 4;
+  DType dtype = 5;
+  repeated string domain_tags = 6;
+  repeated float fingerprint = 7;  // L2-normalized, default len 64
+  int64 cost_flops = 8;
+  float p50_latency_ms = 9;
+  float capacity_qps = 10;
+  string adapter_id = 11;          // optional
+  string acl_policy_id = 12;
+  repeated string affinity_tags = 13;
+  string node_id = 14;
+}
+
+enum CombinationOp {
+  OP_UNSPECIFIED = 0;
+  REPLACE = 1;   // replace local set with listed refs (+ weights)
+  AUGMENT = 2;   // mix listed refs with residual local behavior as host defines
+}
+
+message CombinationStep {
+  int32 layer_id = 1;
+  repeated ExpertRef expert_refs = 2;
+  repeated float weights = 3;
+  CombinationOp op = 4;
+  repeated string lease_ids = 5;   // parallel to expert_refs when leased
+  repeated string adapter_ids = 6; // parallel optional adapters
+}
+
+message CombinationPlan {
+  string plan_id = 1;
+  string host_model_id = 2;
+  repeated CombinationStep steps = 3;
+  Budget budget = 4;
+  int32 ttl_ms = 5;
+  float score = 6;
+  bool local_only_equivalent = 7;
+}
+
+message ActivationBatch {
+  bytes tensor = 1;                // inline; prefer buffer_ref for large/rdma
+  string buffer_ref = 2;           // rdma / shared-memory handle
+  repeated int64 shape = 3;        // e.g. [batch, seq, dim]
+  DType dtype = 4;
+  bytes padding_mask = 5;          // optional packed bitmask
+  bool grad_required = 6;
+  string cache_key = 7;            // optional; privacy-sensitive
+}
+
+// ---------------------------------------------------------------------------
+// Registry
+// ---------------------------------------------------------------------------
+
+message RegisterExpertRequest {
+  RequestMeta meta = 1;
+  ExpertDescriptor descriptor = 2;
+  bool force = 3;
+  // If true (or server auto-promote), expert becomes routable after heartbeat.
+  bool promote = 4;
+}
+
+message RegisterExpertResponse {
+  bool ok = 1;
+  string registry_version = 2;
+  repeated string warnings = 3;
+  string error_code = 4;
+}
+
+message HeartbeatRequest {
+  RequestMeta meta = 1;
+  string node_id = 2;
+  repeated ExpertRef expert_refs = 3; // empty => all owned by node
+  map<string, float> capacity_qps = 4; // key: "model:layer:expert"
+  map<string, float> load_qps = 5;
+  int64 ts_unix_ms = 6;
+}
+
+message HeartbeatResponse {
+  bool ok = 1;
+  int32 next_heartbeat_ms = 2;
+}
+
+message DeregisterRequest {
+  RequestMeta meta = 1;
+  repeated ExpertRef expert_refs = 2;
+  string reason = 3;
+}
+
+message DeregisterResponse {
+  bool ok = 1;
+}
+
+message NNQuery {
+  repeated float fingerprint = 1;
+  int32 k = 2;
+  int32 host_dim_in = 3;
+  int32 host_dim_out = 4;
+  repeated string domain_tags = 5;
+}
+
+message DescribeExpertsRequest {
+  RequestMeta meta = 1;
+  oneof query {
+    NNQuery nn = 2;
+    ExplicitRefs explicit = 3;
+  }
+  int32 limit = 4;
+}
+
+message ExplicitRefs {
+  repeated ExpertRef expert_refs = 1;
+}
+
+message DescribeExpertsResponse {
+  repeated ExpertDescriptor experts = 1;
+  repeated bool routable = 2;
+  repeated float load_qps = 3;      // parallel to experts
+  repeated float capacity_qps = 4;  // parallel to experts (may mirror descriptor)
+}
+
+service ExpertRegistry {
+  rpc RegisterExpert(RegisterExpertRequest) returns (RegisterExpertResponse);
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  rpc Deregister(DeregisterRequest) returns (DeregisterResponse);
+  rpc DescribeExperts(DescribeExpertsRequest) returns (DescribeExpertsResponse);
+}
+
+// ---------------------------------------------------------------------------
+// Router
+// ---------------------------------------------------------------------------
+
+message LocalTopKEntry {
+  int32 layer_id = 1;
+  repeated ExpertRef expert_refs = 2;
+  repeated float weights = 3;
+}
+
+message ProposeCombinationsRequest {
+  RequestMeta meta = 1;
+  string host_model_id = 2;
+  repeated float context_embedding = 3;
+  repeated int32 layer_hints = 4;
+  Budget budget = 5;
+  int32 n = 6;                 // default 8
+  optional bool include_local_only = 7; // default true when unset
+  repeated LocalTopKEntry local_topk = 8;
+  int32 host_dim = 9;
+}
+
+message ProposeCombinationsResponse {
+  repeated CombinationPlan plans = 1;
+  string router_policy_version = 2;
+}
+
+service CombinationRouter {
+  rpc ProposeCombinations(ProposeCombinationsRequest)
+      returns (ProposeCombinationsResponse);
+}
+
+// ---------------------------------------------------------------------------
+// Node data plane
+// ---------------------------------------------------------------------------
+
+message LeaseCapacityRequest {
+  RequestMeta meta = 1;
+  ExpertRef expert_ref = 2;
+  float tokens_or_qps = 3;
+  int32 ttl_ms = 4;
+  int32 priority = 5;
+}
+
+message LeaseCapacityResponse {
+  string lease_id = 1;
+  int64 lease_deadline_unix_ms = 2;
+  float granted_qps = 3;
+  string error_code = 4;
+}
+
+message ReleaseCapacityRequest {
+  RequestMeta meta = 1;
+  string lease_id = 2;
+}
+
+message ReleaseCapacityResponse {
+  bool ok = 1;
+}
+
+message ForwardExpertRequest {
+  RequestMeta meta = 1;
+  ExpertRef expert_ref = 2;
+  string lease_id = 3;
+  ActivationBatch activation = 4;
+  string adapter_id = 5;
+  string host_model_id = 6;
+  int32 host_layer_id = 7;
+  string plan_id = 8;
+  int32 token_count = 9;
+}
+
+message ForwardExpertResponse {
+  ActivationBatch activation = 1;
+  float actual_latency_ms = 2;
+  string expert_version = 3;
+  string error_code = 4;
+}
+
+message ExportWeightsRequest {
+  RequestMeta meta = 1;
+  ExpertRef expert_ref = 2;
+  string format = 3;
+}
+
+message ExportWeightsResponse {
+  bytes weights = 1;
+  string error_code = 2;
+}
+
+service ExpertNode {
+  rpc LeaseCapacity(LeaseCapacityRequest) returns (LeaseCapacityResponse);
+  rpc ReleaseCapacity(ReleaseCapacityRequest) returns (ReleaseCapacityResponse);
+  rpc ForwardExpert(ForwardExpertRequest) returns (ForwardExpertResponse);
+  rpc ExportWeights(ExportWeightsRequest) returns (ExportWeightsResponse);
+}
+
+// ---------------------------------------------------------------------------
+// Learner
+// ---------------------------------------------------------------------------
+
+message FallbackEvent {
+  int32 layer_id = 1;
+  string reason = 2;
+}
+
+message ReportOutcomeRequest {
+  RequestMeta meta = 1;
+  string plan_id = 2;
+  string host_model_id = 3;
+  float reward = 4;
+  float utility = 5;
+  float latency_ms = 6;
+  float capacity_penalty = 7;
+  int32 tokens = 8;
+  repeated FallbackEvent fallbacks = 9;
+  bool partial = 10;
+  repeated float context_embedding = 11;
+  CombinationPlan plan_snapshot = 12;
+  // HMAC-SHA256 hex over canonical outcome fields (see cei.security.sign_outcome).
+  string attestation = 13;
+}
+
+message ReportOutcomeResponse {
+  bool ok = 1;
+  string learner_version = 2;
+}
+
+service CombinationLearner {
+  rpc ReportOutcome(ReportOutcomeRequest) returns (ReportOutcomeResponse);
+}

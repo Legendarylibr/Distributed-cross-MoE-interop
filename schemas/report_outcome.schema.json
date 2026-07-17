@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cei.spec/schemas/report_outcome.json",
+  "title": "ReportOutcome",
+  "type": "object",
+  "required": [
+    "plan_id",
+    "host_model_id",
+    "reward",
+    "utility",
+    "latency_ms",
+    "tokens"
+  ],
+  "properties": {
+    "plan_id": { "type": "string" },
+    "host_model_id": { "type": "string" },
+    "reward": { "type": "number" },
+    "utility": { "type": "number" },
+    "latency_ms": { "type": "number", "minimum": 0 },
+    "capacity_penalty": { "type": "number" },
+    "tokens": { "type": "integer", "minimum": 0 },
+    "fallbacks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["layer_id", "reason"],
+        "properties": {
+          "layer_id": { "type": "integer", "minimum": 0 },
+          "reason": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "partial": { "type": "boolean" },
+    "context_embedding": {
+      "type": "array",
+      "items": { "type": "number" }
+    },
+    "plan_snapshot": { "$ref": "combination_plan.schema.json" }
+  },
+  "additionalProperties": false
+}

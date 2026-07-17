@@ -1,0 +1,105 @@
+// Internal RPCs for Compose deployment (Router↔Learner scoring, Driver↔Host, Adapter Hub).
+syntax = "proto3";
+
+package cei.internal.v0_1;
+
+import "cei.proto";
+
+message EstimateUtilityRequest {
+  cei.v0_1.RequestMeta meta = 1;
+  repeated float context_embedding = 2;
+  cei.v0_1.CombinationPlan plan = 3;
+  map<string, float> fingerprint_sims = 4;
+  float alpha = 5;
+}
+
+message EstimateUtilityResponse {
+  float utility = 1;
+  string learner_version = 2;
+}
+
+message ArmParams {
+  string arm_key = 1;
+  repeated float theta = 2;  // ctx_dim
+  int32 count = 3;
+}
+
+message GetPolicySnapshotRequest {
+  cei.v0_1.RequestMeta meta = 1;
+  int32 known_version = 2;  // if equal, server may return empty arms
+}
+
+message GetPolicySnapshotResponse {
+  int32 version = 1;
+  int32 ctx_dim = 2;
+  repeated ArmParams arms = 3;
+  bool unchanged = 4;
+}
+
+service LearnerInternal {
+  rpc EstimateUtility(EstimateUtilityRequest) returns (EstimateUtilityResponse);
+  rpc GetPolicySnapshot(GetPolicySnapshotRequest) returns (GetPolicySnapshotResponse);
+}
+
+message LocalTopKEntry {
+  int32 layer_id = 1;
+  repeated cei.v0_1.ExpertRef expert_refs = 2;
+  repeated float weights = 3;
+}
+
+message RunStepRequest {
+  cei.v0_1.RequestMeta meta = 1;
+  repeated float x = 2;
+  repeated float domain_vec = 3;
+  string mode = 4;  // learned | local | random | heuristic
+  cei.v0_1.Budget budget = 5;
+}
+
+message RunStepResponse {
+  cei.v0_1.ReportOutcomeRequest outcome = 1;
+  repeated float hidden = 2;
+  string error_code = 3;
+}
+
+service HostService {
+  rpc RunStep(RunStepRequest) returns (RunStepResponse);
+}
+
+message AdapterBlob {
+  string adapter_id = 1;
+  int32 dim_in_host = 2;
+  int32 dim_in_remote = 3;
+  int32 dim_out_remote = 4;
+  int32 dim_out_host = 5;
+  bytes w_in = 6;   // float64 row-major
+  bytes w_out = 7;
+  repeated int64 w_in_shape = 8;
+  repeated int64 w_out_shape = 9;
+  string content_digest = 10;  // sha256 hex of w_in||w_out
+}
+
+message UpsertAdapterRequest {
+  cei.v0_1.RequestMeta meta = 1;
+  AdapterBlob adapter = 2;
+}
+
+message UpsertAdapterResponse {
+  bool ok = 1;
+  string error_code = 2;
+  string content_digest = 3;
+}
+
+message GetAdapterRequest {
+  cei.v0_1.RequestMeta meta = 1;
+  string adapter_id = 2;
+}
+
+message GetAdapterResponse {
+  AdapterBlob adapter = 1;
+  string error_code = 2;
+}
+
+service AdapterHub {
+  rpc UpsertAdapter(UpsertAdapterRequest) returns (UpsertAdapterResponse);
+  rpc GetAdapter(GetAdapterRequest) returns (GetAdapterResponse);
+}

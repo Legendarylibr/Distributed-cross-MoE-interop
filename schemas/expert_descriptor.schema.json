@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cei.spec/schemas/expert_descriptor.json",
+  "title": "ExpertDescriptor",
+  "type": "object",
+  "required": [
+    "expert_ref",
+    "version",
+    "dim_in",
+    "dim_out",
+    "dtype",
+    "fingerprint",
+    "cost_flops",
+    "p50_latency_ms",
+    "capacity_qps"
+  ],
+  "properties": {
+    "expert_ref": {
+      "type": "object",
+      "required": ["model_id", "layer_id", "expert_id"],
+      "properties": {
+        "model_id": { "type": "string", "minLength": 1 },
+        "layer_id": { "type": "integer", "minimum": 0 },
+        "expert_id": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "version": { "type": "string", "minLength": 1 },
+    "dim_in": { "type": "integer", "minimum": 1 },
+    "dim_out": { "type": "integer", "minimum": 1 },
+    "dtype": {
+      "type": "string",
+      "enum": ["F16", "BF16", "F32", "F8"]
+    },
+    "domain_tags": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "fingerprint": {
+      "type": "array",
+      "items": { "type": "number" },
+      "minItems": 8,
+      "maxItems": 512
+    },
+    "cost_flops": { "type": "integer", "minimum": 0 },
+    "p50_latency_ms": { "type": "number", "minimum": 0 },
+    "capacity_qps": { "type": "number", "minimum": 0 },
+    "adapter_id": { "type": "string" },
+    "acl_policy_id": { "type": "string" },
+    "affinity_tags": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "node_id": { "type": "string" }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,223 @@
+# Shared Compose env — secure profile with explicit allowlists + outcome HMAC.
+# Plaintext gRPC remains for local Compose; set CEI_REQUIRE_TLS=1 + certs for prod.
+x-cei-security: &cei-security
+  CEI_SECURITY_PROFILE: secure
+  CEI_AUTO_PROMOTE: "1"
+  CEI_OUTCOME_HMAC_SECRET: cei-compose-dev-secret
+  CEI_REQUIRE_OUTCOME_ATTESTATION: "1"
+  CEI_REGISTRY_ALLOW_ALL: "0"
+  CEI_REGISTRY_PUBLISHERS: node-code,node-math,node-general
+  CEI_REGISTRY_CONSUMERS: >-
+    cei-router,host-code,host-math,host-general,node-code,node-math,node-general,cei-driver,e2e
+  CEI_NODE_ACL_OPEN: "0"
+  CEI_NODE_ACL_ALLOW: host-code,host-math,host-general,cei-driver,e2e
+  CEI_ADAPTER_WRITERS: node-code,node-math,node-general
+  CEI_PRIORITY_ADMINS: ""
+
+services:
+  registry:
+    build: .
+    command: ["cei-serve", "registry", "--bind", "[::]:50051"]
+    environment:
+      <<: *cei-security
+      CEI_ROLE: registry
+    ports:
+      - "50051:50051"
+    networks: [cei-net]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import grpc; c=grpc.insecure_channel('localhost:50051'); grpc.channel_ready_future(c).result(timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  learner:
+    build: .
+    command: ["cei-serve", "learner", "--bind", "[::]:50053", "--ctx-dim", "33"]
+    environment:
+      <<: *cei-security
+      CEI_ROLE: learner
+      CEI_CTX_DIM: "33"
+    ports:
+      - "50053:50053"
+    networks: [cei-net]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import grpc; c=grpc.insecure_channel('localhost:50053'); grpc.channel_ready_future(c).result(timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  adapter-hub:
+    build: .
+    command: ["cei-serve", "adapter-hub", "--bind", "[::]:50054"]
+    environment:
+      <<: *cei-security
+      CEI_ROLE: adapter-hub
+    ports:
+      - "50054:50054"
+    networks: [cei-net]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import grpc; c=grpc.insecure_channel('localhost:50054'); grpc.channel_ready_future(c).result(timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  router:
+    build: .
+    command:
+      [
+        "cei-serve",
+        "router",
+        "--bind",
+        "[::]:50052",
+        "--registry",
+        "registry:50051",
+        "--learner",
+        "learner:50053",
+      ]
+    environment:
+      <<: *cei-security
+      CEI_ROLE: router
+      CEI_REGISTRY_ADDR: registry:50051
+      CEI_LEARNER_ADDR: learner:50053
+    ports:
+      - "50052:50052"
+    depends_on:
+      registry:
+        condition: service_healthy
+      learner:
+        condition: service_healthy
+    networks: [cei-net]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import grpc; c=grpc.insecure_channel('localhost:50052'); grpc.channel_ready_future(c).result(timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  node-code:
+    build: .
+    command:
+      [
+        "cei-serve",
+        "node",
+        "--bind",
+        "[::]:50061",
+        "--domain",
+        "code",
+        "--registry",
+        "registry:50051",
+        "--router",
+        "router:50052",
+        "--learner",
+        "learner:50053",
+        "--seed",
+        "0",
+      ]
+    environment:
+      <<: *cei-security
+      CEI_ROLE: node
+      CEI_DOMAIN: code
+      CEI_PEER_ADDRS: '{"moe-code":"node-code:50061","moe-math":"node-math:50062","moe-general":"node-general:50063"}'
+      CEI_REGISTRY_ADDR: registry:50051
+      CEI_ROUTER_ADDR: router:50052
+      CEI_LEARNER_ADDR: learner:50053
+      CEI_ADAPTER_HUB_ADDR: adapter-hub:50054
+      CEI_LAYER_COMPAT: exact_layer
+    ports:
+      - "50061:50061"
+    depends_on:
+      router:
+        condition: service_healthy
+      adapter-hub:
+        condition: service_healthy
+    networks: [cei-net]
+
+  node-math:
+    build: .
+    command:
+      [
+        "cei-serve",
+        "node",
+        "--bind",
+        "[::]:50062",
+        "--domain",
+        "math",
+        "--registry",
+        "registry:50051",
+        "--router",
+        "router:50052",
+        "--learner",
+        "learner:50053",
+        "--seed",
+        "0",
+      ]
+    environment:
+      <<: *cei-security
+      CEI_ROLE: node
+      CEI_DOMAIN: math
+      CEI_PEER_ADDRS: '{"moe-code":"node-code:50061","moe-math":"node-math:50062","moe-general":"node-general:50063"}'
+      CEI_ADAPTER_HUB_ADDR: adapter-hub:50054
+      CEI_LAYER_COMPAT: exact_layer
+    ports:
+      - "50062:50062"
+    depends_on:
+      router:
+        condition: service_healthy
+      adapter-hub:
+        condition: service_healthy
+    networks: [cei-net]
+
+  node-general:
+    build: .
+    command:
+      [
+        "cei-serve",
+        "node",
+        "--bind",
+        "[::]:50063",
+        "--domain",
+        "general",
+        "--registry",
+        "registry:50051",
+        "--router",
+        "router:50052",
+        "--learner",
+        "learner:50053",
+        "--seed",
+        "0",
+      ]
+    environment:
+      <<: *cei-security
+      CEI_ROLE: node
+      CEI_DOMAIN: general
+      CEI_PEER_ADDRS: '{"moe-code":"node-code:50061","moe-math":"node-math:50062","moe-general":"node-general:50063"}'
+      CEI_ADAPTER_HUB_ADDR: adapter-hub:50054
+      CEI_LAYER_COMPAT: exact_layer
+    ports:
+      - "50063:50063"
+    depends_on:
+      router:
+        condition: service_healthy
+      adapter-hub:
+        condition: service_healthy
+    networks: [cei-net]
+
+  driver:
+    build: .
+    profiles: ["driver"]
+    environment:
+      <<: *cei-security
+      CEI_NODE_CODE: node-code:50061
+      CEI_NODE_MATH: node-math:50062
+      CEI_NODE_GENERAL: node-general:50063
+      CEI_STEPS: "200"
+      CEI_MODE: learned
+    command: ["cei-simulate-distributed", "--steps", "200", "--mode", "learned", "--json"]
+    depends_on:
+      - node-code
+      - node-math
+      - node-general
+    networks: [cei-net]
+
+networks:
+  cei-net:
+    driver: bridge
