@@ -146,7 +146,9 @@ def build_fleet(
             domain=domain,
             gate_weights=gate_weights,
             layer_expert_ids=layer_expert_ids,
-            rng=np.random.default_rng(seed + hash(domain) % 10000),
+            # Stable per-domain offset: Python's str hash is salted per process
+            # (PYTHONHASHSEED), which would make fixed-seed fleets non-reproducible.
+            rng=np.random.default_rng(seed + 1000 * (DOMAINS.index(domain) + 1)),
         )
         hosts[model_id] = host
         nodes[model_id] = node
@@ -237,11 +239,16 @@ def run_ablations(
     steps: int = 400,
     seed: int = 0,
 ) -> dict[str, dict[str, float]]:
-    """Run A0–A3 ablations with independent fleets (fair cold start each)."""
+    """Run A0–A3 ablations as paired comparisons (SPEC §7.2).
+
+    Every mode runs on the same seed, so all modes see an identical fleet
+    (cold start) and an identical task stream; differences between rows are
+    attributable to the mode alone, not to seed noise.
+    """
     modes = ("local", "random", "heuristic", "learned")
     out: dict[str, dict[str, float]] = {}
-    for i, mode in enumerate(modes):
-        _, result = run_simulation(steps=steps, seed=seed + i * 17, mode=mode)
+    for mode in modes:
+        _, result = run_simulation(steps=steps, seed=seed, mode=mode)
         summary = result.summary()
         # Cast mode properly for JSON-ish dict
         summary["mode"] = mode

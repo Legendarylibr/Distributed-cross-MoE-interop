@@ -332,6 +332,8 @@ Canonical types are defined in [schemas/cei.proto](schemas/cei.proto) and mirror
 3. **Fixed heuristic** — nearest fingerprint, no learner update.
 4. **Learned combinations** — full two-timescale system.
 
+**Controlled comparison (normative):** Ablation modes MUST be compared as paired runs — identical seeds, fleet configuration, and task stream — so that the mode is the only variable that changes between rungs. Results SHOULD be reported as mean and variance over ≥3 seeds. Comparisons that vary anything besides the ablation mode (seed, workload, budgets, fleet topology) do not support claims of learning benefit.
+
 ### 7.3 Workloads
 
 Multi-domain mixture where each fleet model is strong on a subset (e.g., code / math / general). Report quality–latency Pareto curves under fixed capacity quotas.

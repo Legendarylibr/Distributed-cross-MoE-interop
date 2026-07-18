@@ -35,7 +35,8 @@ def build_domain_host(
     if domain not in DOMAINS:
         raise ValueError(f"unknown domain {domain}")
     domain_vecs = orthogonal_domain_vecs(dim, seed=seed)
-    rng = np.random.default_rng(seed + hash(domain) % 10000)
+    # Stable per-domain offset: hash() is salted per process (PYTHONHASHSEED)
+    rng = np.random.default_rng(seed + 1000 * (DOMAINS.index(domain) + 1))
     model_id = f"moe-{domain}"
     hub = AdapterHub()
     identity = AdapterHub.identity(f"identity-{dim}", dim, rng)

@@ -28,6 +28,8 @@ Expanded checklist aligned with [SPEC.md](../SPEC.md) §§7–8. Use this when r
 | A2 | Fixed heuristic (nearest fingerprint) | No `ReportOutcome` learner updates |
 | A3 | Full CEI learner | Should Pareto-dominate A0–A2 on quality–latency under quota |
 
+**Controls (normative, SPEC §7.2):** A0–A3 MUST run as paired comparisons — same seed, same fleet, same task stream — so the mode is the only changed variable. Report mean ± variance over ≥3 seeds. The reference harness (`cei.simulate.run_ablations`) implements the paired design; sweep the `seed` argument for multi-seed reporting.
+
 ### 1.3 Workload recipe (informative)
 
 1. Fleet of ≥3 MoE hosts, each strong on a disjoint domain slice.
