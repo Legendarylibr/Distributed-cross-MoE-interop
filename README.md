@@ -7,6 +7,8 @@ This repository is both:
 1. A **normative specification** ([SPEC.md](SPEC.md)) for the learning problem and interoperation protocol  
 2. A **Python reference implementation** (`cei/`) — in-process simulator plus networked gRPC roles you can run with Docker Compose
 
+> **Status (v0.1.0):** This project is **mainly conceptual** — a specification and reference implementation meant to be **built on**, not a production system. The simulator and gRPC stack exist to make the ideas concrete and testable end-to-end; real deployments will need their own model integration, hardening, and scale work on top.
+
 **Repo:** [Legendarylibr/Distributed-cross-MoE-interop](https://github.com/Legendarylibr/Distributed-cross-MoE-interop)
 
 ---
