@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+import zlib
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -336,6 +337,8 @@ def _zip_step(step: CombinationStep):
 
 
 def _context_embedding(h: np.ndarray, domain_vec: np.ndarray, model_id: str) -> np.ndarray:
-    # Fixed-size context: concat hidden summary + domain + model hash
-    mid = abs(hash(model_id)) % 997 / 997.0
+    # Fixed-size context: concat hidden summary + domain + model hash.
+    # crc32 rather than hash(): str hashes are salted per process (PYTHONHASHSEED),
+    # which would make context features — and thus learner behavior — non-reproducible.
+    mid = (zlib.crc32(model_id.encode()) % 997) / 997.0
     return np.concatenate([h[:16] if h.size >= 16 else np.pad(h, (0, 16 - h.size)), domain_vec[:16], [mid]])
