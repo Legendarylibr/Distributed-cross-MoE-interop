@@ -6,7 +6,6 @@ from concurrent import futures
 
 import grpc
 import numpy as np
-import pytest
 
 from cei import wire
 from cei.learner import ContextualBanditLearner

@@ -8,8 +8,10 @@ import grpc
 import numpy as np
 import pytest
 
+from cei import wire
 from cei.adapters import AdapterHub
 from cei.learner import ContextualBanditLearner, score_plan_from_snapshot
+from cei.node import fingerprint_from_weights, make_expert_module
 from cei.pb import cei_internal_pb2, cei_internal_pb2_grpc
 from cei.registry import ExpertRegistry
 from cei.router import CombinationRouter
@@ -24,8 +26,6 @@ from cei.types import (
     ExpertRef,
     Outcome,
 )
-from cei import wire
-from cei.node import fingerprint_from_weights, make_expert_module
 
 
 def test_registry_quota_exceeded():

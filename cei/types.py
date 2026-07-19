@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
-import uuid
 
 import numpy as np
 
@@ -57,10 +56,10 @@ class ExpertDescriptor:
     p50_latency_ms: float
     capacity_qps: float
     domain_tags: list[str] = field(default_factory=list)
-    adapter_id: Optional[str] = None
-    acl_policy_id: Optional[str] = None
+    adapter_id: str | None = None
+    acl_policy_id: str | None = None
     affinity_tags: list[str] = field(default_factory=list)
-    node_id: Optional[str] = None
+    node_id: str | None = None
 
     def normalized_fingerprint(self) -> np.ndarray:
         fp = np.asarray(self.fingerprint, dtype=np.float64)
@@ -89,10 +88,17 @@ class CombinationPlan:
     ttl_ms: int = 5000
     score: float = 0.0
     local_only_equivalent: bool = False
+    # Unix ms when the plan was issued; 0 means unknown (no TTL enforcement).
+    issued_unix_ms: int = 0
 
     @staticmethod
     def new_id() -> str:
         return str(uuid.uuid4())
+
+    def expired(self, now_ms: float) -> bool:
+        if self.issued_unix_ms <= 0 or self.ttl_ms <= 0:
+            return False
+        return now_ms > self.issued_unix_ms + self.ttl_ms
 
     def remote_refs(self, host_model_id: str) -> list[ExpertRef]:
         out: list[ExpertRef] = []
@@ -115,7 +121,7 @@ class ActivationBatch:
     tensor: np.ndarray
     dtype: DType = DType.F32
     grad_required: bool = False
-    cache_key: Optional[str] = None
+    cache_key: str | None = None
 
     @property
     def shape(self) -> tuple[int, ...]:
@@ -139,8 +145,8 @@ class Outcome:
     tokens: int
     fallbacks: list[FallbackEvent] = field(default_factory=list)
     partial: bool = False
-    context_embedding: Optional[np.ndarray] = None
-    plan: Optional[CombinationPlan] = None
+    context_embedding: np.ndarray | None = None
+    plan: CombinationPlan | None = None
 
 
 @dataclass
@@ -149,3 +155,5 @@ class Lease:
     expert_ref: ExpertRef
     deadline_ms: float
     granted_qps: float
+    # Principal the lease was granted to; forwards/releases must match.
+    principal: str | None = None

@@ -170,7 +170,7 @@ class CombinationRouter:
 
         # Score
         fp_sims: dict[str, float] = {}
-        for ell, pool in pools.items():
+        for pool in pools.values():
             for ref, sim in pool:
                 fp_sims[ref.key()] = sim
 
@@ -259,6 +259,7 @@ class CombinationRouter:
             budget=budget,
             score=0.0,
             local_only_equivalent=True,
+            issued_unix_ms=int(time.time() * 1000),
         )
 
     def _build_plan(
@@ -271,7 +272,7 @@ class CombinationRouter:
         budget: Budget,
     ) -> CombinationPlan:
         steps: list[CombinationStep] = []
-        for ell, remote in zip(subset, remotes):
+        for ell, remote in zip(subset, remotes, strict=True):
             local_pairs = local_topk.get(ell, [])
             local_refs = [r for r, _ in local_pairs]
             local_w = [w for _, w in local_pairs]
@@ -313,6 +314,7 @@ class CombinationRouter:
             steps=steps,
             budget=budget,
             local_only_equivalent=False,
+            issued_unix_ms=int(time.time() * 1000),
         )
 
     def _feasible(self, plan: CombinationPlan, host_model_id: str, budget: Budget) -> bool:

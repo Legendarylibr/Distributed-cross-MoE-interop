@@ -2,18 +2,21 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 
 import grpc
 import numpy as np
 
+from cei import wire
 from cei.client import LearnerClient, NodeClient, RegistryClient, RouterClient
 from cei.host import MoEHost
 from cei.node import ExpertNode
 from cei.pb import cei_internal_pb2, cei_internal_pb2_grpc, cei_pb2, cei_pb2_grpc
 from cei.security import audit, can_use_priority, resolve_principal
 from cei.types import Budget
-from cei import wire
+
+_LOG = logging.getLogger("cei.node")
 
 
 class NodeServicer(cei_pb2_grpc.ExpertNodeServicer):
@@ -21,8 +24,7 @@ class NodeServicer(cei_pb2_grpc.ExpertNodeServicer):
         self.node = node
 
     def LeaseCapacity(self, request, context):
-        meta_p = request.meta.principal_id if request.meta else None
-        principal = resolve_principal(context, meta_p)
+        principal = resolve_principal(context, request.meta)
         priority = int(request.priority or 0)
         if priority >= 10 and not can_use_priority(principal, priority):
             priority = 0
@@ -50,23 +52,27 @@ class NodeServicer(cei_pb2_grpc.ExpertNodeServicer):
             return cei_pb2.LeaseCapacityResponse(error_code="ACL_DENIED")
         except KeyError:
             return cei_pb2.LeaseCapacityResponse(error_code="NOT_ROUTABLE")
-        except RuntimeError as exc:
+        except (RuntimeError, ValueError) as exc:
             return cei_pb2.LeaseCapacityResponse(error_code=str(exc))
 
     def ReleaseCapacity(self, request, context):
-        self.node.release_capacity(request.lease_id)
+        principal = resolve_principal(context, request.meta)
+        try:
+            self.node.release_capacity(request.lease_id, principal=principal)
+        except PermissionError:
+            audit("release_deny", principal=principal, reason="ACL_DENIED")
+            return cei_pb2.ReleaseCapacityResponse(ok=False)
         return cei_pb2.ReleaseCapacityResponse(ok=True)
 
     def ForwardExpert(self, request, context):
-        meta_p = request.meta.principal_id if request.meta else None
-        principal = resolve_principal(context, meta_p)
+        principal = resolve_principal(context, request.meta)
         try:
             act, lat = self.node.forward_expert(
                 expert_ref=wire.expert_ref_from_pb(request.expert_ref),
                 activation=wire.activation_from_pb(request.activation),
                 lease_id=request.lease_id or None,
                 adapter_id=request.adapter_id or None,
-                request_id=request.meta.request_id if request.meta else None,
+                request_id=request.meta.request_id or None,
                 principal=principal,
                 require_lease=bool(request.lease_id),
             )
@@ -81,17 +87,17 @@ class NodeServicer(cei_pb2_grpc.ExpertNodeServicer):
                 actual_latency_ms=lat,
                 expert_version="1.0.0",
             )
-        except PermissionError:
-            audit("forward_deny", principal=principal, reason="ACL_DENIED")
-            return cei_pb2.ForwardExpertResponse(error_code="ACL_DENIED")
+        except PermissionError as exc:
+            reason = str(exc) or "ACL_DENIED"
+            audit("forward_deny", principal=principal, reason=reason)
+            return cei_pb2.ForwardExpertResponse(error_code=reason)
         except KeyError:
             return cei_pb2.ForwardExpertResponse(error_code="NOT_ROUTABLE")
-        except RuntimeError as exc:
+        except (RuntimeError, ValueError) as exc:
             return cei_pb2.ForwardExpertResponse(error_code=str(exc))
 
     def ExportWeights(self, request, context):
-        meta_p = request.meta.principal_id if request.meta else None
-        principal = resolve_principal(context, meta_p)
+        principal = resolve_principal(context, request.meta)
         audit("export_deny", principal=principal, reason="DENY_BY_DEFAULT")
         return cei_pb2.ExportWeightsResponse(error_code="ACL_DENIED")
 
@@ -137,6 +143,14 @@ class HostServicer(cei_internal_pb2_grpc.HostServiceServicer):
                 pass
 
     def RunStep(self, request, context):
+        # Driving the host consumes fleet capacity: gate on the node ACL.
+        principal = resolve_principal(context, request.meta)
+        node = self.host.node
+        if not node.acl_open and (principal is None or principal not in node.acl_allow):
+            audit("runstep_deny", principal=principal, reason="ACL_DENIED")
+            context.set_code(grpc.StatusCode.PERMISSION_DENIED)
+            context.set_details("ACL_DENIED")
+            return cei_internal_pb2.RunStepResponse(error_code="ACL_DENIED")
         try:
             self._ensure_peers()
             x = np.asarray(list(request.x), dtype=np.float64)
@@ -191,8 +205,8 @@ def start_heartbeat_loop(
         while not stop_event.is_set():
             try:
                 registry.heartbeat(node.node_id, expert_refs=None)
-            except Exception:
-                pass
+            except Exception as exc:  # noqa: BLE001 — transient; retried next tick
+                _LOG.warning("heartbeat failed: %s", exc)
             stop_event.wait(interval_s)
 
     t = threading.Thread(target=_loop, daemon=True)

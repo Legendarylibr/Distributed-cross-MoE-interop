@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import signal
 import sys
@@ -13,19 +14,30 @@ from concurrent import futures
 import grpc
 import numpy as np
 
+from cei import wire
 from cei.adapters import AdapterHub
 from cei.client import LearnerClient, RegistryClient, RouterClient
 from cei.fleet_build import build_domain_host, peer_addrs_from_env
 from cei.learner import ContextualBanditLearner
 from cei.pb import cei_internal_pb2, cei_internal_pb2_grpc, cei_pb2, cei_pb2_grpc
+from cei.security import adapter_digest, assert_transport_ok, get_config
 from cei.server.adapter_hub_servicer import AdapterHubServicer
 from cei.server.learner_servicer import LearnerInternalServicer, LearnerServicer
 from cei.server.node_servicer import HostServicer, NodeServicer, register_all_experts
 from cei.server.registry_servicer import RegistryServicer
 from cei.server.router_servicer import RouterServicer
 from cei.tlsutil import add_secure_or_insecure_port, make_channel
-from cei.security import adapter_digest, assert_transport_ok, get_config
-from cei import wire
+
+LOG = logging.getLogger("cei.serve")
+
+
+def _setup_logging() -> None:
+    level = os.environ.get("CEI_LOG_LEVEL", "INFO").upper()
+    logging.basicConfig(
+        level=getattr(logging, level, logging.INFO),
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+        stream=sys.stderr,
+    )
 
 
 def _add_health(server: grpc.Server) -> None:
@@ -36,8 +48,8 @@ def _add_health(server: grpc.Server) -> None:
         health_pb2_grpc.add_HealthServicer_to_server(health_servicer, server)
         health_servicer.set("", health_pb2.HealthCheckResponse.SERVING)
         health_servicer.set("cei", health_pb2.HealthCheckResponse.SERVING)
-    except Exception:
-        pass
+    except ImportError:
+        LOG.debug("grpc_health not installed; health service disabled")
 
 
 def serve_registry(bind: str) -> None:
@@ -46,7 +58,7 @@ def serve_registry(bind: str) -> None:
     _add_health(server)
     add_secure_or_insecure_port(server, bind)
     server.start()
-    print(f"registry listening on {bind}", flush=True)
+    LOG.info("registry listening on %s", bind)
     _wait(server)
 
 
@@ -60,7 +72,7 @@ def serve_learner(bind: str, ctx_dim: int) -> None:
     _add_health(server)
     add_secure_or_insecure_port(server, bind)
     server.start()
-    print(f"learner listening on {bind}", flush=True)
+    LOG.info("learner listening on %s", bind)
     _wait(server)
 
 
@@ -71,7 +83,7 @@ def serve_router(bind: str, registry_addr: str, learner_addr: str) -> None:
     _add_health(server)
     add_secure_or_insecure_port(server, bind)
     server.start()
-    print(f"router listening on {bind}", flush=True)
+    LOG.info("router listening on %s", bind)
     _wait(server)
 
 
@@ -81,7 +93,7 @@ def serve_adapter_hub(bind: str) -> None:
     _add_health(server)
     add_secure_or_insecure_port(server, bind)
     server.start()
-    print(f"adapter-hub listening on {bind}", flush=True)
+    LOG.info("adapter-hub listening on %s", bind)
     _wait(server)
 
 
@@ -110,7 +122,7 @@ def serve_node(
         try:
             _publish_adapters(hub_addr, node.adapter_hub, principal=f"node-{domain}")
         except Exception as exc:
-            print(f"adapter publish skipped: {exc}", flush=True)
+            LOG.warning("adapter publish skipped: %s", exc)
 
     stop = threading.Event()
 
@@ -124,7 +136,7 @@ def serve_node(
                     load_qps=node.get_load_snapshot(),
                 )
             except Exception as exc:
-                print(f"heartbeat error: {exc}", flush=True)
+                LOG.warning("heartbeat error: %s", exc)
             stop.wait(5.0)
 
     threading.Thread(target=heartbeat_loop, daemon=True).start()
@@ -144,7 +156,7 @@ def serve_node(
     _add_health(server)
     add_secure_or_insecure_port(server, bind)
     server.start()
-    print(f"node-{domain} listening on {bind} peers={peers}", flush=True)
+    LOG.info("node-%s listening on %s peers=%s", domain, bind, peers)
     try:
         _wait(server)
     finally:
@@ -173,7 +185,8 @@ def _publish_adapters(hub_addr: str, hub: AdapterHub, principal: str) -> None:
                     w_out_shape=list(adapter.w_out.shape),
                     content_digest=digest,
                 ),
-            )
+            ),
+            timeout=10.0,
         )
     channel.close()
 
@@ -186,7 +199,8 @@ def _wait_for_registry(registry: RegistryClient, retries: int = 30) -> None:
                 cei_pb2.DescribeExpertsRequest(
                     meta=wire.new_meta(),
                     explicit=cei_pb2.ExplicitRefs(expert_refs=[]),
-                )
+                ),
+                timeout=5.0,
             )
             return
         except Exception:
@@ -230,9 +244,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seed", type=int, default=int(os.environ.get("CEI_SEED", "0")))
     args = parser.parse_args(argv)
 
+    _setup_logging()
     assert_transport_ok()
     cfg = get_config()
-    print(f"cei-serve security_profile={cfg.profile}", flush=True)
+    LOG.info("cei-serve security_profile=%s", cfg.profile)
 
     if args.role == "registry":
         serve_registry(args.bind)

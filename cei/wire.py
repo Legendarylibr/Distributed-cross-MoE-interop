@@ -1,7 +1,12 @@
-"""Convert between CEI dataclasses and protobuf messages."""
+"""Convert between CEI dataclasses and protobuf messages.
+
+All conversions from wire format validate untrusted input (shapes, sizes)
+before allocating; malformed payloads raise ValueError with a stable code.
+"""
 
 from __future__ import annotations
 
+import time
 import uuid
 
 import numpy as np
@@ -39,12 +44,27 @@ _PB_TO_OP = {
 }
 
 
+# Upper bound on inline activation tensors (elements) — DoS guard.
+MAX_TENSOR_ELEMENTS = 16_777_216  # 128 MiB of float64
+MAX_FINGERPRINT_LEN = 4096
+MAX_SHAPE_DIMS = 8
+
+
 def new_meta(principal_id: str = "cei-dev", request_id: str | None = None) -> cei_pb2.RequestMeta:
-    return cei_pb2.RequestMeta(
-        request_id=request_id or str(uuid.uuid4()),
+    """Build RequestMeta; HMAC-signed when CEI_AUTH_SECRET is configured."""
+    from cei.security import get_config, sign_meta
+
+    rid = request_id or str(uuid.uuid4())
+    ts = int(time.time() * 1000)
+    meta = cei_pb2.RequestMeta(
+        request_id=rid,
         principal_id=principal_id,
-        cei_version="0.1.0",
+        cei_version="0.2.0",
+        ts_unix_ms=ts,
     )
+    if get_config().auth_secret:
+        meta.auth_token = sign_meta(principal_id, rid, ts)
+    return meta
 
 
 def expert_ref_to_pb(ref: ExpertRef) -> cei_pb2.ExpertRef:
@@ -143,6 +163,7 @@ def plan_to_pb(plan: CombinationPlan) -> cei_pb2.CombinationPlan:
         ttl_ms=plan.ttl_ms,
         score=plan.score,
         local_only_equivalent=plan.local_only_equivalent,
+        issued_unix_ms=plan.issued_unix_ms,
     )
 
 
@@ -167,6 +188,7 @@ def plan_from_pb(msg: cei_pb2.CombinationPlan) -> CombinationPlan:
         ttl_ms=msg.ttl_ms or 5000,
         score=msg.score,
         local_only_equivalent=msg.local_only_equivalent,
+        issued_unix_ms=int(msg.issued_unix_ms),
     )
 
 
@@ -182,8 +204,29 @@ def activation_to_pb(act: ActivationBatch) -> cei_pb2.ActivationBatch:
 
 
 def activation_from_pb(msg: cei_pb2.ActivationBatch) -> ActivationBatch:
-    shape = tuple(int(x) for x in msg.shape) if msg.shape else (-1,)
+    """Decode an inline activation tensor from untrusted wire input."""
+    n_bytes = len(msg.tensor)
+    if n_bytes % 8 != 0:
+        raise ValueError("MALFORMED_TENSOR:byte_length")
+    n_elems = n_bytes // 8
+    if n_elems > MAX_TENSOR_ELEMENTS:
+        raise ValueError("MALFORMED_TENSOR:too_large")
+    if msg.shape:
+        if len(msg.shape) > MAX_SHAPE_DIMS:
+            raise ValueError("MALFORMED_TENSOR:rank")
+        shape = tuple(int(x) for x in msg.shape)
+        if any(d < 0 for d in shape):
+            raise ValueError("MALFORMED_TENSOR:negative_dim")
+        expect = 1
+        for d in shape:
+            expect *= d
+        if expect != n_elems:
+            raise ValueError("MALFORMED_TENSOR:shape_mismatch")
+    else:
+        shape = (n_elems,)
     arr = np.frombuffer(msg.tensor, dtype=np.float64).reshape(shape)
+    if not np.all(np.isfinite(arr)):
+        raise ValueError("MALFORMED_TENSOR:non_finite")
     return ActivationBatch(
         tensor=arr.copy(),
         dtype=_PB_TO_DTYPE.get(msg.dtype, DType.F32),
@@ -201,6 +244,7 @@ def outcome_to_report_pb(
     fb = [
         cei_pb2.FallbackEvent(layer_id=f.layer_id, reason=f.reason) for f in outcome.fallbacks
     ]
+    meta = meta or new_meta()
     if attestation is None:
         from cei.security import get_config, sign_outcome
 
@@ -213,11 +257,12 @@ def outcome_to_report_pb(
                 utility=outcome.utility,
                 latency_ms=outcome.latency_ms,
                 tokens=outcome.tokens,
+                request_id=meta.request_id,
             )
         else:
             attestation = ""
     req = cei_pb2.ReportOutcomeRequest(
-        meta=meta or new_meta(),
+        meta=meta,
         plan_id=outcome.plan_id,
         host_model_id=outcome.host_model_id,
         reward=outcome.reward,

@@ -8,14 +8,13 @@ import pytest
 from cei.learner import ContextualBanditLearner
 from cei.node import ExpertNode, fingerprint_from_weights, make_expert_module
 from cei.registry import ExpertRegistry
-from cei.router import CombinationRouter
 from cei.simulate import build_fleet, run_ablations, run_simulation
 from cei.types import (
     ActivationBatch,
     Budget,
+    CombinationOp,
     CombinationPlan,
     CombinationStep,
-    CombinationOp,
     DType,
     ExpertDescriptor,
     ExpertRef,

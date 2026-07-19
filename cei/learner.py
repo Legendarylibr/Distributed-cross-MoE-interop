@@ -1,7 +1,12 @@
-"""Combination learner: contextual bandit over plan arms."""
+"""Combination learner: contextual bandit over plan arms.
+
+Thread-safe: state updates and reads are guarded by an internal RLock so the
+learner can back a multi-worker gRPC servicer.
+"""
 
 from __future__ import annotations
 
+import threading
 from collections import defaultdict
 from dataclasses import dataclass, field
 
@@ -20,23 +25,30 @@ class ContextualBanditLearner:
     lambda_bal: float = 0.01
     lambda_stick: float = 0.01
     version: int = 0
+    max_arms: int = 50_000
     _A: dict[str, np.ndarray] = field(default_factory=dict)
     _b: dict[str, np.ndarray] = field(default_factory=dict)
     _counts: dict[str, int] = field(default_factory=lambda: defaultdict(int))
     _pending: list[Outcome] = field(default_factory=list)
     _prev_arm: str | None = None
     _expert_uses: dict[str, int] = field(default_factory=lambda: defaultdict(int))
+    _lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
 
     def _ensure_arm(self, arm: str) -> None:
         if arm not in self._A:
+            if len(self._A) >= self.max_arms:
+                raise RuntimeError("ARM_QUOTA_EXCEEDED")
             self._A[arm] = self.lambda_reg * np.eye(self.ctx_dim)
             self._b[arm] = np.zeros(self.ctx_dim)
 
     def estimate_utility(self, phi: np.ndarray, plan: CombinationPlan) -> float:
         arm = plan.arm_key()
-        self._ensure_arm(arm)
-        A_inv = np.linalg.pinv(self._A[arm])
-        theta = A_inv @ self._b[arm]
+        with self._lock:
+            self._ensure_arm(arm)
+            A_inv = np.linalg.pinv(self._A[arm])
+            theta = A_inv @ self._b[arm]
+            prev_arm = self._prev_arm
+            bal = self.lambda_bal * self._balance_penalty(plan)
         phi = np.asarray(phi, dtype=np.float64)
         if phi.shape[0] != self.ctx_dim:
             phi = _pad_or_trim(phi, self.ctx_dim)
@@ -44,9 +56,8 @@ class ContextualBanditLearner:
         # UCB-style bonus for exploration in scoring
         bonus = 0.1 * float(np.sqrt(phi @ A_inv @ phi))
         stick = 0.0
-        if self._prev_arm is not None and arm != self._prev_arm:
+        if prev_arm is not None and arm != prev_arm:
             stick = self.lambda_stick
-        bal = self.lambda_bal * self._balance_penalty(plan)
         return mean + bonus - stick - bal
 
     def _balance_penalty(self, plan: CombinationPlan) -> float:
@@ -63,46 +74,56 @@ class ContextualBanditLearner:
         return float(np.mean(uses) / total) * 10.0
 
     def report(self, outcome: Outcome) -> None:
-        self._pending.append(outcome)
-        if outcome.plan is not None:
-            for step in outcome.plan.steps:
-                for ref in step.expert_refs:
-                    self._expert_uses[ref.key()] += 1
-        if len(self._pending) >= self.batch_size:
-            self.flush()
+        if not np.isfinite(outcome.reward):
+            raise ValueError("INVALID_OUTCOME:reward")
+        with self._lock:
+            self._pending.append(outcome)
+            if outcome.plan is not None:
+                for step in outcome.plan.steps:
+                    for ref in step.expert_refs:
+                        self._expert_uses[ref.key()] += 1
+            if len(self._pending) >= self.batch_size:
+                self.flush()
 
     def flush(self) -> None:
-        if not self._pending:
-            return
-        for outcome in self._pending:
-            plan = outcome.plan
-            if plan is None or outcome.context_embedding is None:
-                continue
-            arm = plan.arm_key()
-            self._ensure_arm(arm)
-            phi = _pad_or_trim(np.asarray(outcome.context_embedding, dtype=np.float64), self.ctx_dim)
-            r = outcome.reward
-            self._A[arm] += np.outer(phi, phi)
-            self._b[arm] += r * phi
-            self._counts[arm] += 1
-            self._prev_arm = arm
-        self._pending.clear()
-        self.version += 1
+        with self._lock:
+            if not self._pending:
+                return
+            for outcome in self._pending:
+                plan = outcome.plan
+                if plan is None or outcome.context_embedding is None:
+                    continue
+                arm = plan.arm_key()
+                try:
+                    self._ensure_arm(arm)
+                except RuntimeError:
+                    continue  # arm quota: drop rather than fail the batch
+                phi = _pad_or_trim(
+                    np.asarray(outcome.context_embedding, dtype=np.float64), self.ctx_dim
+                )
+                r = outcome.reward
+                self._A[arm] += np.outer(phi, phi)
+                self._b[arm] += r * phi
+                self._counts[arm] += 1
+                self._prev_arm = arm
+            self._pending.clear()
+            self.version += 1
 
     def policy_snapshot(self) -> dict:
         """Export arm thetas for router-side caching (hot-path scoring without RPC)."""
-        arms = []
-        for arm, A in self._A.items():
-            A_inv = np.linalg.pinv(A)
-            theta = A_inv @ self._b[arm]
-            arms.append(
-                {
-                    "arm_key": arm,
-                    "theta": theta.astype(np.float64),
-                    "count": int(self._counts.get(arm, 0)),
-                }
-            )
-        return {"version": self.version, "ctx_dim": self.ctx_dim, "arms": arms}
+        with self._lock:
+            arms = []
+            for arm, A in self._A.items():
+                A_inv = np.linalg.pinv(A)
+                theta = A_inv @ self._b[arm]
+                arms.append(
+                    {
+                        "arm_key": arm,
+                        "theta": theta.astype(np.float64),
+                        "count": int(self._counts.get(arm, 0)),
+                    }
+                )
+            return {"version": self.version, "ctx_dim": self.ctx_dim, "arms": arms}
 
     def score_from_snapshot(
         self,
