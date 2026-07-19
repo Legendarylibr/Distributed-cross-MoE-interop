@@ -194,10 +194,7 @@ tests/                 # unit, gRPC, security canaries, e2e
 
 ---
 
-## Honest limitations
-
-What this repo does **not** demonstrate, stated plainly so nobody has to
-discover it the hard way:
+##limitations
 
 **The core scientific question is unproven.** CEI assumes activations from one
 independently trained model can be meaningfully processed by another model's
