@@ -190,6 +190,20 @@ In-flight leases MAY continue until expiry; new leases MUST fail.
 
 **Semantics:** Hosts MUST report executed plans. Learners MAY drop malformed events with metrics.
 
+**Attestation (when `CEI_REQUIRE_OUTCOME_ATTESTATION=1`):**
+
+- `attestation` = HMAC-SHA256 hex over the canonical payload
+  `v2|plan_id|host_model_id|reward|utility|latency_ms|tokens|request_id`,
+  keyed by `CEI_OUTCOME_HMAC_SECRET`.
+- Floats are quantized to IEEE float32 before encoding (proto `float` fields
+  are 32-bit on the wire; quantizing both sides keeps signer and verifier in
+  agreement) and rendered with `float.hex()` for an exact, locale-free form.
+- Binding `meta.request_id` into the payload makes each signature single-use;
+  the learner keeps a replay cache and rejects duplicate `request_id`s
+  (`OUTCOME_REJECTED`).
+- Reports failing verification are rejected and audited; the learner state is
+  untouched.
+
 ---
 
 ## 7. Fallback and error contract

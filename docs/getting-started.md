@@ -86,6 +86,7 @@ E2E spins ephemeral ports and child `cei-serve` processes (no Docker required).
 
 ## 5. Next reading
 
+- [how-it-works.md](how-it-works.md) — plain-language breakdown of the whole system  
 - [architecture.md](architecture.md) — topology and lease ownership  
 - [learning.md](learning.md) — how plans are scored and updated  
 - [security.md](security.md) — before exposing ports beyond localhost  

@@ -4,14 +4,16 @@ Guides and design notes for **Cross-Expert Interoperation**. The normative sourc
 
 ## Start here
 
-1. [Getting started](getting-started.md) — install, simulate, Compose  
-2. [Architecture](architecture.md) — who talks to whom and why  
-3. [Security](security.md) — profiles, ACLs, attestation  
+1. [How it works](how-it-works.md) — plain-language breakdown: MoE basics, life of a request, why each piece exists  
+2. [Getting started](getting-started.md) — install, simulate, Compose  
+3. [Architecture](architecture.md) — who talks to whom and why  
+4. [Security](security.md) — profiles, ACLs, attestation  
 
 ## Design
 
 | Doc | Contents |
 |-----|----------|
+| [how-it-works.md](how-it-works.md) | Narrative walkthrough, trust hand-offs, glossary |
 | [architecture.md](architecture.md) | Hierarchical topology, roles, leases, layer compat, HA notes |
 | [learning.md](learning.md) | Reward objective, candidate generation, two-timescale learner |
 | [protocol.md](protocol.md) | gRPC semantics, deadlines, fallbacks, error codes |
@@ -41,7 +43,7 @@ Regenerate Python stubs:
 
 ## Reading order (suggested)
 
-**New to CEI:** getting-started → architecture §1–2 → learning §1–3 → protocol §1–3  
+**New to CEI:** how-it-works → getting-started → architecture §1–2 → learning §1–3 → protocol §1–3  
 
 **Deploying a fleet:** deploy-compose → security → architecture trust boundaries → security-redteam (residual risk)  
 

@@ -7,7 +7,7 @@ This repository is both:
 1. A **normative specification** ([SPEC.md](SPEC.md)) for the learning problem and interoperation protocol  
 2. A **Python reference implementation** (`cei/`) — in-process simulator plus networked gRPC roles you can run with Docker Compose
 
-> **Status (v0.1.0):** This project is **mainly conceptual** — a specification and reference implementation meant to be **built on**, not a production system. The simulator and gRPC stack exist to make the ideas concrete and testable end-to-end; real deployments will need their own model integration, hardening, and scale work on top.
+> **Status (v0.2.0):** The protocol, security controls, and test coverage are hardened and CI-verified — authenticated principals (mTLS / HMAC request tokens), replay-protected outcome attestation, principal-bound leases, ownership-checked registry writes, validated wire inputs, thread-safe cores, RPC deadlines. The *models* are not real: everything runs against a **toy synthetic fleet** (no real MoE checkpoints, simulated latency and utility). Treat this as a hardened reference you integrate real models into, and read [Honest limitations](#honest-limitations) before drawing conclusions from the numbers. Full breakdown: [docs/how-it-works.md](docs/how-it-works.md).
 
 **Repo:** [Legendarylibr/Distributed-cross-MoE-interop](https://github.com/Legendarylibr/Distributed-cross-MoE-interop)
 
@@ -171,6 +171,7 @@ tests/                 # unit, gRPC, security canaries, e2e
 | Doc | Read when you want… |
 |-----|---------------------|
 | [docs/README.md](docs/README.md) | Index of all docs |
+| [docs/how-it-works.md](docs/how-it-works.md) | Plain-language breakdown: MoE basics, life of a request, glossary |
 | [docs/getting-started.md](docs/getting-started.md) | Install, first sim, first Compose run |
 | [docs/architecture.md](docs/architecture.md) | Topology, roles, leases, trust boundaries |
 | [docs/learning.md](docs/learning.md) | Objective, candidate search, bandit update |
@@ -193,9 +194,65 @@ tests/                 # unit, gRPC, security canaries, e2e
 
 ---
 
-## Out of scope (v0.1)
+## Honest limitations
 
-Training-framework plugins, Kubernetes operators, shipping production model weights or datasets, and full weight-sandbox attestation (promotion flag only in the reference stack).
+What this repo does **not** demonstrate, stated plainly so nobody has to
+discover it the hard way:
+
+**The core scientific question is unproven.** CEI assumes activations from one
+independently trained model can be meaningfully processed by another model's
+expert (given matching dims or an adapter). The simulator *assumes* this works
+— its utility function rewards domain-matched swaps by construction. Whether
+real residual streams align well enough across independently trained models
+for borrowed experts to help (rather than inject noise) is an open research
+question. The `exact_layer` default and adapter mechanism are mitigations, not
+evidence.
+
+**Everything is synthetic.** Experts are small random matrices, "utility" is a
+hand-built function of domain match, and latencies are drawn from simple
+distributions. Simulator results (`cei-simulate`, the Compose driver)
+demonstrate that the *machinery* works — registration, routing, leasing,
+learning, fallback, auth — not that cross-model expert borrowing improves any
+real workload. No claim in this repo is backed by a real-model experiment.
+
+**No persistence.** Registry, learner state, leases, and the replay cache are
+in-memory. A process restart loses the catalog and the learned policy, and —
+relevant for security — empties the replay cache, so a captured signed outcome
+becomes replayable again after a learner restart until its HMAC secret rotates.
+
+**Single points of failure.** Registry and Learner are single processes. The
+HA design in [docs/architecture.md §9](docs/architecture.md) is a target, not
+an implementation. Local-only fallback is what keeps hosts alive when the
+control plane dies.
+
+**Shared-secret crypto, not PKI.** Request auth and outcome attestation use
+fleet-wide HMAC secrets: any holder can sign as anyone. That resists outsiders
+and accidental cross-talk, not a malicious insider node. Per-principal
+credentials, secret rotation, and revocation are on the deployer. mTLS gives
+per-peer identity but the reference stack has no certificate
+issuance/rotation story.
+
+**Security is tested, not audited.** The v0.2 controls (HMAC auth, replay
+protection, lease binding, input validation, ACLs) have dedicated tests, but
+there has been no external audit, no fuzzing campaign, and no side-channel
+analysis. The data plane still reveals activation *shapes* and traffic
+patterns even under mTLS; the optional privacy profile (truncation/DP noise)
+is specified but not implemented.
+
+**The learner is deliberately simple.** A linear contextual bandit with hashed
+plan arms, ε-greedy exploration, and no off-policy correction. It can be slow
+to adapt after fleet changes, offers no formal regret guarantee under
+nonstationarity, and the neural-policy and distillation paths in
+[docs/learning.md](docs/learning.md) §§5.2, 6 are specified but not
+implemented.
+
+**Scale is untested.** Tens of experts and three nodes in CI. The fingerprint
+NN is exact cosine over an in-memory matrix (fine at 10³, not at 10⁶), and no
+load, soak, or chaos testing has been done.
+
+**Also out of scope:** training-framework plugins, Kubernetes operators,
+shipping real model weights or datasets, and weight-sandbox attestation
+(promotion is an operator flag, not an enforced sandbox eval).
 
 ---
 
