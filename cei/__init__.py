@@ -1,6 +1,6 @@
-"""CEI — Cross-Expert Interoperation reference implementation (v0.1)."""
+"""CEI — Cross-Expert Interoperation reference implementation."""
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 from cei.types import (
     ActivationBatch,

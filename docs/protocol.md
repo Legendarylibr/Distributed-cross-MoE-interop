@@ -27,6 +27,8 @@ All RPCs carry:
 | `principal_id` | YES | Authenticated caller (from mTLS cert SAN or token) |
 | `trace_id` | NO | Distributed tracing |
 | `cei_version` | YES | e.g. `"0.1.0"` |
+| `ts_unix_ms` | when signed | Signing time; servers enforce a freshness window |
+| `auth_token` | when `CEI_AUTH_SECRET` set | HMAC-SHA256 hex over `v1\|principal_id\|request_id\|ts_unix_ms`; proves principal on plaintext channels (mTLS identity still wins) |
 
 ---
 

@@ -1,7 +1,7 @@
 # Cross-Expert Interoperation Specification (Hierarchical MoE)
 
 **Status:** Normative  
-**Version:** 0.1.0  
+**Version:** 0.2.0  
 **Scope:** Learning algorithm + distributed interoperation protocol for a fleet of Mixture-of-Experts (MoE) models with local expert banks and a cross-model expert marketplace.
 
 Companion documents:
@@ -242,9 +242,10 @@ Full message semantics: [docs/protocol.md](docs/protocol.md). Schemas: [schemas/
 
 - **Lease ownership (locked):** **Host-owned.** The host that executes a plan calls `LeaseCapacity` / `ReleaseCapacity` on remotes. The Router does not pre-lease (avoids holding capacity for unsampled plans). See [docs/architecture.md](docs/architecture.md) §3.6.
 - **Idempotency:** Every mutating or forward request carries `request_id` (UUID). Servers treat duplicates as at-most-once for side effects; `ForwardExpert` may be exactly-once w.r.t. billing/capacity if the node tracks `request_id` within a TTL window.
-- **Leases:** Capacity leases expire at `lease_deadline`. Stale leases MUST NOT be used for new forwards.
+- **Leases:** Capacity leases expire at `lease_deadline`. Stale leases MUST NOT be used for new forwards. Leases are bound to the `(expert_ref, principal)` they were granted for; forwards or releases with a mismatched expert or principal MUST be rejected (`LEASE_MISMATCH`).
+- **Plan TTL:** Plans carry `issued_unix_ms` + `ttl_ms`. Hosts MUST NOT execute remote steps of an expired plan; degrade to local (`PLAN_EXPIRED`).
 - **Fallback:** If remote RTT exceeds `budget.max_remote_latency_ms`, or lease/forward fails, the host MUST degrade to **local-only** combination for that layer (or the whole plan if `budget.strict_local_fallback` is set).
-- **Security:** mTLS between all roles in production; scoped expert ACLs (`principal → expert_ref → {forward, describe, export}`); activation-only RPC by default. Activations are sensitive (privacy profile optional).
+- **Security:** mTLS between all roles in production; scoped expert ACLs (`principal → expert_ref → {forward, describe, export}`); activation-only RPC by default. Activations are sensitive (privacy profile optional). When mTLS is unavailable, `RequestMeta.auth_token` (HMAC-SHA256 over `principal|request_id|ts` with a fleet secret) proves principal identity; outcome attestations are bound to `request_id` and servers MUST reject replays. Servers MUST validate untrusted wire inputs (tensor shapes/sizes, descriptor fields, adapter matrices) before use.
 - **Layer compatibility:** Default `exact_layer` — remote expert layer id must match the host layer being edited (`CEI_LAYER_COMPAT`).
 - **Policy cache:** Router scores from Learner `GetPolicySnapshot` cache; not per-candidate RPCs on the hot path.
 
@@ -371,3 +372,4 @@ Optional profiles: `training` (grad-enabled forwards), `rdma` (tensor transport)
 | Version | Date | Notes |
 |---------|------|-------|
 | 0.1.0 | 2026-07-17 | Initial hierarchical MoE cross-expert interoperation spec |
+| 0.2.0 | 2026-07-18 | Production hardening: HMAC request auth (`RequestMeta.auth_token`), replay-protected outcome attestation, lease binding to `(expert, principal)`, plan TTL (`issued_unix_ms`), mandatory wire-input validation |

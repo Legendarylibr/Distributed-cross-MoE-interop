@@ -4,26 +4,28 @@ from __future__ import annotations
 
 import numpy as np
 
+from cei import wire
 from cei.learner import ContextualBanditLearner
 from cei.pb import cei_internal_pb2, cei_internal_pb2_grpc, cei_pb2, cei_pb2_grpc
 from cei.security import (
+    ReplayCache,
     audit,
     get_config,
     resolve_principal,
     verify_outcome_attestation,
 )
-from cei import wire
 
 
 class LearnerServicer(cei_pb2_grpc.CombinationLearnerServicer):
     def __init__(self, learner: ContextualBanditLearner) -> None:
         self.learner = learner
+        self._replay = ReplayCache(ttl_ms=600_000.0)
 
     def ReportOutcome(self, request, context):
-        meta_p = request.meta.principal_id if request.meta else None
-        principal = resolve_principal(context, meta_p)
+        principal = resolve_principal(context, request.meta)
         cfg = get_config()
-        attestation = getattr(request, "attestation", "") or ""
+        attestation = request.attestation or ""
+        request_id = request.meta.request_id or ""
         ok_attest = verify_outcome_attestation(
             plan_id=request.plan_id,
             host_model_id=request.host_model_id,
@@ -32,17 +34,42 @@ class LearnerServicer(cei_pb2_grpc.CombinationLearnerServicer):
             latency_ms=request.latency_ms,
             tokens=request.tokens,
             attestation=attestation,
+            request_id=request_id,
         )
-        if cfg.require_outcome_attestation and not ok_attest:
+        if cfg.require_outcome_attestation:
+            if not ok_attest:
+                audit(
+                    "outcome_deny",
+                    principal=principal,
+                    plan_id=request.plan_id,
+                    reason="ATTESTATION_INVALID",
+                )
+                return cei_pb2.ReportOutcomeResponse(
+                    ok=False, learner_version=str(self.learner.version)
+                )
+            if not self._replay.check_and_add(request_id):
+                audit(
+                    "outcome_deny",
+                    principal=principal,
+                    plan_id=request.plan_id,
+                    reason="REPLAY",
+                )
+                return cei_pb2.ReportOutcomeResponse(
+                    ok=False, learner_version=str(self.learner.version)
+                )
+        try:
+            outcome = wire.outcome_from_report_pb(request)
+            self.learner.report(outcome)
+        except ValueError as exc:
             audit(
                 "outcome_deny",
                 principal=principal,
                 plan_id=request.plan_id,
-                reason="ATTESTATION_INVALID",
+                reason=str(exc),
             )
-            return cei_pb2.ReportOutcomeResponse(ok=False, learner_version=str(self.learner.version))
-        outcome = wire.outcome_from_report_pb(request)
-        self.learner.report(outcome)
+            return cei_pb2.ReportOutcomeResponse(
+                ok=False, learner_version=str(self.learner.version)
+            )
         audit(
             "outcome_ok",
             principal=principal,

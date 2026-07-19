@@ -121,7 +121,7 @@ def distributed_stack():
         last_err = ""
         while time.time() < deadline:
             # Fail fast if any process exited
-            for p, log in zip(procs, logs):
+            for p, log in zip(procs, logs, strict=True):
                 if p.poll() is not None:
                     text = log.read_text() if log.exists() else ""
                     raise RuntimeError(f"process exited early code={p.returncode}\n{text[-2000:]}")
@@ -135,7 +135,7 @@ def distributed_stack():
                 last_err = str(exc)
                 time.sleep(0.5)
         else:
-            dump = "\n---\n".join(f"{l.name}:\n{l.read_text()[-800:]}" for l in logs if l.exists())
+            dump = "\n---\n".join(f"{lg.name}:\n{lg.read_text()[-800:]}" for lg in logs if lg.exists())
             raise RuntimeError(f"nodes did not become ready: {last_err}\n{dump}")
         client.close()
         yield addrs

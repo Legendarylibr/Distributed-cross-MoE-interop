@@ -113,7 +113,7 @@ docker compose down
 | `node-code` / `math` / `general` | 50061–63 | MoE hosts + expert nodes |
 | `driver` | — | One-shot distributed sim (`profile: driver`) |
 
-Compose defaults to a **secure** security profile with explicit ACL allowlists and HMAC outcome attestation (see [docs/deploy-compose.md](docs/deploy-compose.md) and [docs/security.md](docs/security.md)). Transport is plaintext gRPC for local Compose; enable mTLS with `CEI_TLS_*` for production.
+Compose defaults to a **secure** security profile: explicit ACL allowlists, HMAC-signed request metadata (`CEI_AUTH_SECRET`), and replay-protected HMAC outcome attestation (see [docs/deploy-compose.md](docs/deploy-compose.md) and [docs/security.md](docs/security.md)). Transport is plaintext gRPC for local Compose; enable mTLS with `CEI_TLS_*` for production.
 
 ### Local multi-process (no Docker)
 
@@ -188,8 +188,8 @@ tests/                 # unit, gRPC, security canaries, e2e
 - **Topology:** hierarchical (local + marketplace), not one sharded MoE  
 - **Learning:** online plan sampling + offline contextual bandit / neural policy  
 - **Search:** swap / insert / drop at up to \(m=2\) layers  
-- **Transport:** gRPC (+ optional mTLS); timeout → local fallback  
-- **Security:** deny-by-default ACLs on distributed roles; promotion gate; optional outcome HMAC  
+- **Transport:** gRPC (+ optional mTLS); timeout → local fallback; all client RPCs carry deadlines  
+- **Security:** deny-by-default ACLs on distributed roles; promotion gate; HMAC request-auth tokens; replay-protected outcome attestation; leases bound to `(expert, principal)`; validated wire inputs  
 
 ---
 

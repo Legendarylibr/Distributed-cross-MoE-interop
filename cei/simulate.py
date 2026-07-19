@@ -11,8 +11,7 @@ from cei.learner import ContextualBanditLearner
 from cei.node import ExpertNode, fingerprint_from_weights, make_expert_module
 from cei.registry import ExpertRegistry
 from cei.router import CombinationRouter
-from cei.types import Budget, DType, ExpertDescriptor, ExpertRef, Outcome
-
+from cei.types import Budget, DType, ExpertDescriptor, ExpertRef
 
 DOMAINS = ("code", "math", "general")
 
@@ -61,7 +60,7 @@ def build_fleet(
 ) -> Fleet:
     rng = np.random.default_rng(seed)
     domain_vecs = {}
-    for i, d in enumerate(DOMAINS):
+    for d in DOMAINS:
         v = rng.normal(size=(dim,))
         # Make domains roughly orthogonal
         for prev in domain_vecs.values():

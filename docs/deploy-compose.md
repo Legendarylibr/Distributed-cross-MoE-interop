@@ -69,7 +69,11 @@ When `CEI_TLS_CERT` + `CEI_TLS_KEY` are set, servers use secure ports and client
 | `CEI_MODE` / `CEI_STEPS` | Driver simulation mode and length |
 | `CEI_LAYER_COMPAT` | Layer matching (`exact_layer` default) |
 | `CEI_SECURITY_PROFILE` | `secure` or `lab` |
-| `CEI_OUTCOME_HMAC_SECRET` / `CEI_REQUIRE_OUTCOME_ATTESTATION` | Attest `ReportOutcome` |
+| `CEI_AUTH_SECRET` / `CEI_REQUIRE_AUTH_TOKEN` / `CEI_AUTH_MAX_SKEW_MS` | HMAC request-auth tokens on `RequestMeta` |
+| `CEI_OUTCOME_HMAC_SECRET` / `CEI_REQUIRE_OUTCOME_ATTESTATION` | Attest `ReportOutcome` (request-bound, replay-protected) |
+| `CEI_REQUIRE_ADAPTER_DIGEST` | Reject adapter uploads without a SHA-256 content digest |
+| `CEI_RPC_TIMEOUT_S` / `CEI_RUNSTEP_TIMEOUT_S` | Client RPC deadlines (default 10 s / 60 s) |
+| `CEI_LOG_LEVEL` | Server log level (default `INFO`) |
 | `CEI_REGISTRY_PUBLISHERS` / `CEI_REGISTRY_CONSUMERS` | Registry write/read principals |
 | `CEI_NODE_ACL_ALLOW` / `CEI_ADAPTER_WRITERS` | Node and hub ACLs |
 | `CEI_AUTO_PROMOTE` | Auto-mark experts routable on register |

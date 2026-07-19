@@ -17,6 +17,13 @@ message RequestMeta {
   string principal_id = 2;
   string trace_id = 3;
   string cei_version = 4;  // "0.1.0"
+  // Milliseconds since epoch when the request was signed. Servers reject
+  // requests outside the freshness window when auth tokens are required.
+  int64 ts_unix_ms = 5;
+  // HMAC-SHA256 hex over "v1|principal_id|request_id|ts_unix_ms" keyed with
+  // the fleet auth secret (CEI_AUTH_SECRET). Proves principal identity on
+  // plaintext channels; mTLS peer identity takes precedence when present.
+  string auth_token = 6;
 }
 
 message ExpertRef {
@@ -86,6 +93,9 @@ message CombinationPlan {
   int32 ttl_ms = 5;
   float score = 6;
   bool local_only_equivalent = 7;
+  // Milliseconds since epoch when the router issued the plan. Hosts MUST NOT
+  // execute remote steps of a plan past issued_unix_ms + ttl_ms.
+  int64 issued_unix_ms = 8;
 }
 
 message ActivationBatch {
@@ -295,7 +305,10 @@ message ReportOutcomeRequest {
   bool partial = 10;
   repeated float context_embedding = 11;
   CombinationPlan plan_snapshot = 12;
-  // HMAC-SHA256 hex over canonical outcome fields (see cei.security.sign_outcome).
+  // HMAC-SHA256 hex over canonical outcome fields, bound to meta.request_id
+  // for replay protection (see cei.security.sign_outcome). Learners MUST
+  // reject duplicate request_ids within the replay window when attestation
+  // is required.
   string attestation = 13;
 }
 

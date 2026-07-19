@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import grpc
 
+from cei import wire
 from cei.pb import cei_pb2, cei_pb2_grpc
 from cei.registry import ExpertRegistry
 from cei.security import (
@@ -12,7 +13,6 @@ from cei.security import (
     get_config,
     resolve_principal,
 )
-from cei import wire
 
 
 class RegistryServicer(cei_pb2_grpc.ExpertRegistryServicer):
@@ -23,12 +23,12 @@ class RegistryServicer(cei_pb2_grpc.ExpertRegistryServicer):
                 allow_all=cfg.registry_allow_all,
                 auto_promote=cfg.auto_promote,
                 consumer_principals=set(cfg.registry_consumers),
+                enforce_ownership=(cfg.profile == "secure"),
             )
         self.registry = registry
 
     def RegisterExpert(self, request, context):
-        meta_p = request.meta.principal_id if request.meta else None
-        principal = resolve_principal(context, meta_p)
+        principal = resolve_principal(context, request.meta)
         if not can_publish(principal):
             audit("register_deny", principal=principal, reason="PUBLISHER_ACL")
             return cei_pb2.RegisterExpertResponse(ok=False, error_code="ACL_DENIED")
@@ -45,6 +45,9 @@ class RegistryServicer(cei_pb2_grpc.ExpertRegistryServicer):
                 promote=promote,
             )
             return cei_pb2.RegisterExpertResponse(ok=True, registry_version="1")
+        except PermissionError as exc:
+            audit("register_deny", principal=principal, reason=str(exc))
+            return cei_pb2.RegisterExpertResponse(ok=False, error_code="ACL_DENIED")
         except ValueError as exc:
             return cei_pb2.RegisterExpertResponse(ok=False, error_code=str(exc))
         except Exception as exc:  # noqa: BLE001
@@ -53,6 +56,11 @@ class RegistryServicer(cei_pb2_grpc.ExpertRegistryServicer):
             return cei_pb2.RegisterExpertResponse(ok=False, error_code="INTERNAL")
 
     def Heartbeat(self, request, context):
+        principal = resolve_principal(context, request.meta)
+        # Heartbeats mutate capacity/load: publisher-gated like registration.
+        if not can_publish(principal):
+            audit("heartbeat_deny", principal=principal, reason="PUBLISHER_ACL")
+            return cei_pb2.HeartbeatResponse(ok=False, next_heartbeat_ms=0)
         refs = [wire.expert_ref_from_pb(r) for r in request.expert_refs] or None
         next_ms = self.registry.heartbeat(
             request.node_id,
@@ -63,19 +71,21 @@ class RegistryServicer(cei_pb2_grpc.ExpertRegistryServicer):
         return cei_pb2.HeartbeatResponse(ok=True, next_heartbeat_ms=next_ms)
 
     def Deregister(self, request, context):
-        meta_p = request.meta.principal_id if request.meta else None
-        principal = resolve_principal(context, meta_p)
+        principal = resolve_principal(context, request.meta)
         if not can_publish(principal):
             audit("deregister_deny", principal=principal, reason="PUBLISHER_ACL")
             return cei_pb2.DeregisterResponse(ok=False)
         refs = [wire.expert_ref_from_pb(r) for r in request.expert_refs]
-        self.registry.deregister(refs)
+        try:
+            self.registry.deregister(refs, principal=principal)
+        except PermissionError as exc:
+            audit("deregister_deny", principal=principal, reason=str(exc))
+            return cei_pb2.DeregisterResponse(ok=False)
         audit("deregister_ok", principal=principal, count=len(refs))
         return cei_pb2.DeregisterResponse(ok=True)
 
     def DescribeExperts(self, request, context):
-        meta_p = request.meta.principal_id if request.meta else None
-        principal = resolve_principal(context, meta_p)
+        principal = resolve_principal(context, request.meta)
         if request.HasField("nn"):
             nn = request.nn
             import numpy as np

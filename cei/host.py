@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import time
 import uuid
 import zlib
 from dataclasses import dataclass, field
@@ -20,6 +22,8 @@ from cei.types import (
     FallbackEvent,
     Outcome,
 )
+
+_LOG = logging.getLogger("cei.host")
 
 
 @dataclass
@@ -84,6 +88,13 @@ class MoEHost:
             y, lat = self._local_moe(layer_id, h)
             return y, lat, fallbacks
 
+        # SPEC §5.2: stale plans MUST NOT drive new remote forwards.
+        has_remote = any(r.model_id != self.model_id for r in step.expert_refs)
+        if has_remote and plan is not None and plan.expired(time.time() * 1000.0):
+            fallbacks.append(FallbackEvent(layer_id=layer_id, reason="PLAN_EXPIRED"))
+            y, lat = self._local_moe(layer_id, h)
+            return y, lat, fallbacks
+
         try:
             y, lat = self._execute_step(step, h, nodes, require_leases, budget, lease_ttl_ms=5000)
             latency += lat
@@ -123,28 +134,33 @@ class MoEHost:
                 remote = nodes.get(ref.model_id)
                 if remote is None:
                     raise RuntimeError("UNAVAILABLE")
-                # Lease if needed
+                # Host-owned leases (SPEC §5.2): acquire here, always release.
                 lid = lease_id
+                acquired = False
                 if require_leases and not lid:
                     lease = remote.lease_capacity(ref, tokens_or_qps=1.0, ttl_ms=lease_ttl_ms)
                     lid = lease.lease_id
-                act, lat = remote.forward_expert(
-                    expert_ref=ref,
-                    activation=ActivationBatch(tensor=h.copy()),
-                    lease_id=lid,
-                    adapter_id=adapter_id or None,
-                    request_id=str(uuid.uuid4()),
-                    require_lease=require_leases,
-                )
-                # Latency budget check
-                if lat > budget.max_remote_latency_ms and not budget.allow_soft_latency:
-                    if lid:
-                        remote.release_capacity(lid)
-                    raise TimeoutError("DEADLINE_EXCEEDED")
-                y = y + weight * act.tensor
-                total_lat += lat
-                if lid:
-                    remote.release_capacity(lid)
+                    acquired = True
+                try:
+                    act, lat = remote.forward_expert(
+                        expert_ref=ref,
+                        activation=ActivationBatch(tensor=h.copy()),
+                        lease_id=lid,
+                        adapter_id=adapter_id or None,
+                        request_id=str(uuid.uuid4()),
+                        require_lease=require_leases,
+                    )
+                    # Latency budget check
+                    if lat > budget.max_remote_latency_ms and not budget.allow_soft_latency:
+                        raise TimeoutError("DEADLINE_EXCEEDED")
+                    y = y + weight * act.tensor
+                    total_lat += lat
+                finally:
+                    if acquired and lid:
+                        try:
+                            remote.release_capacity(lid)
+                        except Exception as exc:  # noqa: BLE001 — lease expires via TTL
+                            _LOG.debug("lease release failed (expires via TTL): %s", exc)
         return y, total_lat
 
     def _make_local_only_plan(

@@ -1,13 +1,20 @@
-"""gRPC client wrappers."""
+"""gRPC client wrappers.
+
+All RPCs carry a deadline (CEI_RPC_TIMEOUT_S, default 10s; RunStep uses
+CEI_RUNSTEP_TIMEOUT_S, default 60s) so a hung peer cannot stall callers.
+"""
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 
 import grpc
 import numpy as np
 
+from cei import wire
 from cei.pb import cei_internal_pb2, cei_internal_pb2_grpc, cei_pb2, cei_pb2_grpc
+from cei.tlsutil import make_channel
 from cei.types import (
     ActivationBatch,
     Budget,
@@ -17,8 +24,14 @@ from cei.types import (
     Lease,
     Outcome,
 )
-from cei import wire
-from cei.tlsutil import make_channel
+
+
+def _rpc_timeout() -> float:
+    return float(os.environ.get("CEI_RPC_TIMEOUT_S", "10"))
+
+
+def _runstep_timeout() -> float:
+    return float(os.environ.get("CEI_RUNSTEP_TIMEOUT_S", "60"))
 
 
 @dataclass
@@ -60,7 +73,8 @@ class RegistryClient:
                 descriptor=wire.descriptor_to_pb(descriptor),
                 force=force,
                 promote=promote,
-            )
+            ),
+            timeout=_rpc_timeout(),
         )
         if not resp.ok:
             raise RuntimeError(resp.error_code or "REGISTER_FAILED")
@@ -80,7 +94,7 @@ class RegistryClient:
             capacity_qps=capacity_qps or {},
             load_qps=load_qps or {},
         )
-        resp = self.stub.Heartbeat(req)
+        resp = self.stub.Heartbeat(req, timeout=_rpc_timeout())
         if capacity_qps:
             self._capacity_cache.update(capacity_qps)
         if load_qps:
@@ -109,7 +123,8 @@ class RegistryClient:
                 meta=wire.new_meta(principal or self.principal_id),
                 nn=nn,
                 limit=k,
-            )
+            ),
+            timeout=_rpc_timeout(),
         )
         self._ingest_describe(resp)
         out: list[tuple[ExpertDescriptor, float, bool]] = []
@@ -130,7 +145,8 @@ class RegistryClient:
             cei_pb2.DescribeExpertsRequest(
                 meta=wire.new_meta(self.principal_id),
                 explicit=cei_pb2.ExplicitRefs(expert_refs=[wire.expert_ref_to_pb(ref)]),
-            )
+            ),
+            timeout=_rpc_timeout(),
         )
         self._ingest_describe(resp)
         if not resp.experts:
@@ -181,7 +197,8 @@ class LearnerClient:
 
     def report(self, outcome: Outcome) -> str:
         resp = self.stub.ReportOutcome(
-            wire.outcome_to_report_pb(outcome, wire.new_meta(self.principal_id))
+            wire.outcome_to_report_pb(outcome, wire.new_meta(self.principal_id)),
+            timeout=_rpc_timeout(),
         )
         if not resp.ok:
             raise RuntimeError("OUTCOME_REJECTED")
@@ -208,7 +225,8 @@ class LearnerClient:
                 plan=wire.plan_to_pb(plan),
                 fingerprint_sims=fingerprint_sims,
                 alpha=alpha,
-            )
+            ),
+            timeout=_rpc_timeout(),
         )
         return float(resp.utility)
 
@@ -217,7 +235,8 @@ class LearnerClient:
             cei_internal_pb2.GetPolicySnapshotRequest(
                 meta=wire.new_meta(self.principal_id),
                 known_version=known_version,
-            )
+            ),
+            timeout=_rpc_timeout(),
         )
         if resp.unchanged and self._cached_snap and self._cached_snap.get("version") == resp.version:
             return self._cached_snap
@@ -285,7 +304,7 @@ class RouterClient:
             host_dim=host_dim,
         )
         req.include_local_only = include_local_only
-        resp = self.stub.ProposeCombinations(req)
+        resp = self.stub.ProposeCombinations(req, timeout=_rpc_timeout())
         return [wire.plan_from_pb(p) for p in resp.plans]
 
     def close(self) -> None:
@@ -330,7 +349,8 @@ class NodeClient:
                 tokens_or_qps=tokens_or_qps,
                 ttl_ms=ttl_ms,
                 priority=priority,
-            )
+            ),
+            timeout=_rpc_timeout(),
         )
         if resp.error_code:
             raise RuntimeError(resp.error_code)
@@ -345,7 +365,8 @@ class NodeClient:
         self.stub.ReleaseCapacity(
             cei_pb2.ReleaseCapacityRequest(
                 meta=wire.new_meta(self.principal_id), lease_id=lease_id
-            )
+            ),
+            timeout=_rpc_timeout(),
         )
 
     def forward_expert(
@@ -364,7 +385,8 @@ class NodeClient:
                 lease_id=lease_id or "",
                 activation=wire.activation_to_pb(activation),
                 adapter_id=adapter_id or "",
-            )
+            ),
+            timeout=_rpc_timeout(),
         )
         if resp.error_code:
             raise RuntimeError(resp.error_code)
@@ -385,7 +407,8 @@ class NodeClient:
                 domain_vec=[float(v) for v in np.asarray(domain_vec).tolist()],
                 mode=mode,
                 budget=wire.budget_to_pb(budget),
-            )
+            ),
+            timeout=_runstep_timeout(),
         )
         if resp.error_code:
             raise RuntimeError(resp.error_code)
